@@ -7,6 +7,7 @@ import '../../../services/auth_service.dart';
 import '../../../shared/widgets/aashraya_text_field.dart';
 import '../../elder/screens/elder_dashboard.dart';
 import '../../caretaker/screens/caretaker_dashboard.dart';
+import 'link_caretaker_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   final String role;
@@ -21,14 +22,14 @@ class _AuthScreenState extends State<AuthScreen>
   bool _isRegister = true;
 
   final _registerFormKey = GlobalKey<FormState>();
-  final _loginFormKey    = GlobalKey<FormState>();
+  final _loginFormKey = GlobalKey<FormState>();
 
-  final _nameCtrl      = TextEditingController();
-  final _phoneCtrl     = TextEditingController();
-  final _regEmailCtrl  = TextEditingController();
-  final _regPassCtrl   = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _regEmailCtrl = TextEditingController();
+  final _regPassCtrl = TextEditingController();
   final _loginEmailCtrl = TextEditingController();
-  final _loginPassCtrl  = TextEditingController();
+  final _loginPassCtrl = TextEditingController();
 
   bool _isLoading = false;
   final AuthService _auth = AuthService();
@@ -52,13 +53,16 @@ class _AuthScreenState extends State<AuthScreen>
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg,
-            style: GoogleFonts.plusJakartaSans(
-                color: Colors.white, fontSize: 13)),
+        content: Text(
+          msg,
+          style: GoogleFonts.plusJakartaSans(
+            color: Colors.white,
+            fontSize: 13,
+          ),
+        ),
         backgroundColor: AppColors.error,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
       ),
     );
@@ -67,27 +71,47 @@ class _AuthScreenState extends State<AuthScreen>
   void _showSuccess(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg,
-            style: GoogleFonts.plusJakartaSans(
-                color: Colors.white, fontSize: 13)),
+        content: Text(
+          msg,
+          style: GoogleFonts.plusJakartaSans(
+            color: Colors.white,
+            fontSize: 13,
+          ),
+        ),
         backgroundColor: AppColors.success,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
       ),
     );
   }
 
-  void _goToDashboard() {
+  void _goToDashboard() async {
+    if (isElder) {
+      final data = await _auth.getUserData();
+      final linkedTo = data?['linkedTo'];
+      final isLinked = linkedTo != null &&
+          linkedTo.toString().trim().isNotEmpty;
+
+      if (!mounted) return;
+
+      if (!isLinked) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const LinkCaretakerScreen(),
+          ),
+          (route) => false,
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 600),
-        pageBuilder: (_, __, ___) => isElder
+      MaterialPageRoute(
+        builder: (_) => isElder
             ? const ElderDashboard()
             : const CaretakerDashboard(),
-        transitionsBuilder: (_, anim, __, child) =>
-            FadeTransition(opacity: anim, child: child),
       ),
       (route) => false,
     );
@@ -111,9 +135,20 @@ class _AuthScreenState extends State<AuthScreen>
     if (error != null) {
       _showError(error);
     } else {
-      _showSuccess('Account created! Please log in to continue. 🌸');
-      setState(() => _isRegister = false);
-      _loginEmailCtrl.text = _regEmailCtrl.text;
+      if (isElder) {
+        Navigator.of(context).pushAndRemoveUntil(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => const LinkCaretakerScreen(),
+            transitionsBuilder: (_, anim, __, child) =>
+                FadeTransition(opacity: anim, child: child),
+          ),
+          (route) => false,
+        );
+      } else {
+        _showSuccess('Account created! Please sign in. 🌿');
+        setState(() => _isRegister = false);
+        _loginEmailCtrl.text = _regEmailCtrl.text;
+      }
     }
   }
 
@@ -160,9 +195,7 @@ class _AuthScreenState extends State<AuthScreen>
                     child: child,
                   ),
                 ),
-                child: _isRegister
-                    ? _buildRegisterForm()
-                    : _buildLoginForm(),
+                child: _isRegister ? _buildRegisterForm() : _buildLoginForm(),
               ),
             ),
           ),
@@ -175,31 +208,37 @@ class _AuthScreenState extends State<AuthScreen>
     return Container(
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(
-          24, MediaQuery.of(context).padding.top + 20, 24, 24),
+        24,
+        MediaQuery.of(context).padding.top + 20,
+        24,
+        24,
+      ),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border(
-            bottom: BorderSide(color: AppColors.border, width: 1)),
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 1)),
       ),
       child: Row(
         children: [
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
-              width: 40, height: 40,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: AppColors.background,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.border),
               ),
-              child: const Icon(Icons.arrow_back_ios_new_rounded,
-                  size: 16, color: AppColors.walnut),
+              child: const Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 16,
+                color: AppColors.walnut,
+              ),
             ),
           ),
           const SizedBox(width: 16),
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: roleColor.withOpacity(0.1),
               borderRadius: BorderRadius.circular(20),
@@ -208,23 +247,28 @@ class _AuthScreenState extends State<AuthScreen>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(roleEmoji,
-                    style: const TextStyle(fontSize: 14)),
+                Text(roleEmoji, style: const TextStyle(fontSize: 14)),
                 const SizedBox(width: 6),
-                Text(roleName,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: roleColor)),
+                Text(
+                  roleName,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: roleColor,
+                  ),
+                ),
               ],
             ),
           ),
           const Spacer(),
-          Text('Aashraya',
-              style: GoogleFonts.lora(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.walnut)),
+          Text(
+            'Aashraya',
+            style: GoogleFonts.lora(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: AppColors.walnut,
+            ),
+          ),
         ],
       ),
     ).animate().fadeIn(duration: 400.ms);
@@ -271,35 +315,43 @@ class _AuthScreenState extends State<AuthScreen>
                 TextSpan(
                   text: 'Welcome to\n',
                   style: GoogleFonts.lora(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.walnut,
-                      height: 1.3),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.walnut,
+                    height: 1.3,
+                  ),
                 ),
                 TextSpan(
                   text: 'Aashraya 🏠',
                   style: GoogleFonts.lora(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      color: roleColor,
-                      fontStyle: FontStyle.italic),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w600,
+                    color: roleColor,
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 6),
-          Text("Let's set up your account in a moment.",
-              style: AppTextStyles.bodyMedium()),
+          Text(
+            "Let's set up your account in a moment.",
+            style: AppTextStyles.bodyMedium(),
+          ),
           const SizedBox(height: 28),
           AashrayaTextField(
             label: 'Full Name',
             hint: 'e.g. Ramesh Kumar',
             controller: _nameCtrl,
-            prefixIcon: const Icon(Icons.person_outline_rounded,
-                color: AppColors.textHint, size: 20),
+            prefixIcon: const Icon(
+              Icons.person_outline_rounded,
+              color: AppColors.textHint,
+              size: 20,
+            ),
             validator: (v) {
-              if (v == null || v.trim().isEmpty)
+              if (v == null || v.trim().isEmpty) {
                 return 'Please enter your name';
+              }
               if (v.trim().length < 2) return 'Name is too short';
               return null;
             },
@@ -310,13 +362,18 @@ class _AuthScreenState extends State<AuthScreen>
             hint: 'e.g. 9876543210',
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
-            prefixIcon: const Icon(Icons.phone_outlined,
-                color: AppColors.textHint, size: 20),
+            prefixIcon: const Icon(
+              Icons.phone_outlined,
+              color: AppColors.textHint,
+              size: 20,
+            ),
             validator: (v) {
-              if (v == null || v.trim().isEmpty)
+              if (v == null || v.trim().isEmpty) {
                 return 'Please enter your phone number';
-              if (v.trim().length < 10)
+              }
+              if (v.trim().length < 10) {
                 return 'Enter a valid 10-digit number';
+              }
               return null;
             },
           ),
@@ -326,13 +383,18 @@ class _AuthScreenState extends State<AuthScreen>
             hint: 'e.g. ramesh@email.com',
             controller: _regEmailCtrl,
             keyboardType: TextInputType.emailAddress,
-            prefixIcon: const Icon(Icons.mail_outline_rounded,
-                color: AppColors.textHint, size: 20),
+            prefixIcon: const Icon(
+              Icons.mail_outline_rounded,
+              color: AppColors.textHint,
+              size: 20,
+            ),
             validator: (v) {
-              if (v == null || v.trim().isEmpty)
+              if (v == null || v.trim().isEmpty) {
                 return 'Please enter your email';
-              if (!v.contains('@') || !v.contains('.'))
+              }
+              if (!v.contains('@') || !v.contains('.')) {
                 return 'Enter a valid email address';
+              }
               return null;
             },
           ),
@@ -343,13 +405,16 @@ class _AuthScreenState extends State<AuthScreen>
             controller: _regPassCtrl,
             isPassword: true,
             textInputAction: TextInputAction.done,
-            prefixIcon: const Icon(Icons.lock_outline_rounded,
-                color: AppColors.textHint, size: 20),
+            prefixIcon: const Icon(
+              Icons.lock_outline_rounded,
+              color: AppColors.textHint,
+              size: 20,
+            ),
             validator: (v) {
-              if (v == null || v.isEmpty)
-                return 'Please enter a password';
-              if (v.length < 6)
+              if (v == null || v.isEmpty) return 'Please enter a password';
+              if (v.length < 6) {
                 return 'Password must be at least 6 characters';
+              }
               return null;
             },
           ),
@@ -359,27 +424,30 @@ class _AuthScreenState extends State<AuthScreen>
             decoration: BoxDecoration(
               color: roleColor.withOpacity(0.06),
               borderRadius: BorderRadius.circular(12),
-              border:
-                  Border.all(color: roleColor.withOpacity(0.2)),
+              border: Border.all(color: roleColor.withOpacity(0.2)),
             ),
             child: Row(
               children: [
-                Text(roleEmoji,
-                    style: const TextStyle(fontSize: 16)),
+                Text(roleEmoji, style: const TextStyle(fontSize: 16)),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('Registering as $roleName',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12,
-                          color: roleColor,
-                          fontWeight: FontWeight.w500)),
+                  child: Text(
+                    'Registering as $roleName',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: roleColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 28),
           _buildPrimaryButton(
-              label: 'Create My Account', onTap: _handleRegister),
+            label: 'Create My Account',
+            onTap: _handleRegister,
+          ),
           const SizedBox(height: 16),
           Center(
             child: GestureDetector(
@@ -390,15 +458,17 @@ class _AuthScreenState extends State<AuthScreen>
                     TextSpan(
                       text: 'Already have an account? ',
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          color: AppColors.textSecondary),
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                     TextSpan(
                       text: 'Sign In',
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          color: roleColor,
-                          fontWeight: FontWeight.w600),
+                        fontSize: 13,
+                        color: roleColor,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ),
@@ -423,38 +493,45 @@ class _AuthScreenState extends State<AuthScreen>
                 TextSpan(
                   text: 'Welcome\n',
                   style: GoogleFonts.lora(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.walnut,
-                      height: 1.3),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.walnut,
+                    height: 1.3,
+                  ),
                 ),
                 TextSpan(
                   text: 'back 🌸',
                   style: GoogleFonts.lora(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      color: roleColor,
-                      fontStyle: FontStyle.italic),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w600,
+                    color: roleColor,
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 6),
-          Text("We've missed you. Sign in to continue.",
-              style: AppTextStyles.bodyMedium()),
+          Text(
+            "We've missed you. Sign in to continue.",
+            style: AppTextStyles.bodyMedium(),
+          ),
           const SizedBox(height: 32),
           AashrayaTextField(
             label: 'Email Address',
             hint: 'e.g. ramesh@email.com',
             controller: _loginEmailCtrl,
             keyboardType: TextInputType.emailAddress,
-            prefixIcon: const Icon(Icons.mail_outline_rounded,
-                color: AppColors.textHint, size: 20),
+            prefixIcon: const Icon(
+              Icons.mail_outline_rounded,
+              color: AppColors.textHint,
+              size: 20,
+            ),
             validator: (v) {
-              if (v == null || v.trim().isEmpty)
+              if (v == null || v.trim().isEmpty) {
                 return 'Please enter your email';
-              if (!v.contains('@'))
-                return 'Enter a valid email address';
+              }
+              if (!v.contains('@')) return 'Enter a valid email address';
               return null;
             },
           ),
@@ -466,17 +543,21 @@ class _AuthScreenState extends State<AuthScreen>
             isPassword: true,
             textInputAction: TextInputAction.done,
             onEditingComplete: _handleLogin,
-            prefixIcon: const Icon(Icons.lock_outline_rounded,
-                color: AppColors.textHint, size: 20),
+            prefixIcon: const Icon(
+              Icons.lock_outline_rounded,
+              color: AppColors.textHint,
+              size: 20,
+            ),
             validator: (v) {
-              if (v == null || v.isEmpty)
-                return 'Please enter your password';
+              if (v == null || v.isEmpty) return 'Please enter your password';
               return null;
             },
           ),
           const SizedBox(height: 28),
           _buildPrimaryButton(
-              label: 'Sign In to Aashraya', onTap: _handleLogin),
+            label: 'Sign In to Aashraya',
+            onTap: _handleLogin,
+          ),
           const SizedBox(height: 16),
           Center(
             child: GestureDetector(
@@ -487,15 +568,17 @@ class _AuthScreenState extends State<AuthScreen>
                     TextSpan(
                       text: "Don't have an account? ",
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          color: AppColors.textSecondary),
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                     TextSpan(
                       text: 'Create one',
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          color: roleColor,
-                          fontWeight: FontWeight.w600),
+                        fontSize: 13,
+                        color: roleColor,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ),
@@ -528,15 +611,22 @@ class _AuthScreenState extends State<AuthScreen>
         child: Center(
           child: _isLoading
               ? const SizedBox(
-                  width: 22, height: 22,
+                  width: 22,
+                  height: 22,
                   child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2.5))
-              : Text(label,
+                    color: Colors.white,
+                    strokeWidth: 2.5,
+                  ),
+                )
+              : Text(
+                  label,
                   style: GoogleFonts.plusJakartaSans(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white,
-                      letterSpacing: 0.3)),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white,
+                    letterSpacing: 0.3,
+                  ),
+                ),
         ),
       ),
     );
@@ -569,15 +659,14 @@ class _TabButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Center(
-            child: Text(label,
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13,
-                    fontWeight: isActive
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: isActive
-                        ? Colors.white
-                        : AppColors.textSecondary)),
+            child: Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                color: isActive ? Colors.white : AppColors.textSecondary,
+              ),
+            ),
           ),
         ),
       ),

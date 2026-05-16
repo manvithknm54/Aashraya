@@ -9,6 +9,7 @@ import '../../../services/auth_service.dart';
 import '../../../services/task_service.dart';
 import '../../../shared/models/task_model.dart';
 import '../../auth/screens/role_selection_screen.dart';
+import '../../auth/screens/link_caretaker_screen.dart';
 
 class ElderDashboard extends StatefulWidget {
   const ElderDashboard({super.key});
@@ -31,22 +32,26 @@ class _ElderDashboardState extends State<ElderDashboard> {
   }
 
   Future<void> _loadUserData() async {
-    final data = await _authService.getUserData();
+    final uid = _authService.currentUser?.uid;
+    if (uid == null) return;
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get(const GetOptions(source: Source.server));
+
     if (mounted) {
       setState(() {
-        _userData = data;
+        _userData = doc.data();
         _loadingUser = false;
       });
-      // Add default tasks if first login
-      if (data != null && data['firstLogin'] != false) {
-        final uid = _authService.currentUser?.uid;
-        if (uid != null) {
-          await _taskService.addDefaultTasks(uid);
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(uid)
-              .update({'firstLogin': false});
-        }
+
+      if (_userData != null && _userData!['firstLogin'] != false) {
+        await _taskService.addDefaultTasks(uid);
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .update({'firstLogin': false});
       }
     }
   }
@@ -87,12 +92,9 @@ class _ElderDashboardState extends State<ElderDashboard> {
             authService: _authService,
             onSosPressed: _handleSos,
           ),
-          _PlaceholderTab(
-              emoji: '📋', label: 'Tasks', sublabel: 'Coming soon!'),
-          _PlaceholderTab(
-              emoji: '💊', label: 'Medicine', sublabel: 'Coming soon!'),
-          _PlaceholderTab(
-              emoji: '💬', label: 'Sathi', sublabel: 'Your AI companion'),
+          _PlaceholderTab(emoji: '📋', label: 'Tasks', sublabel: 'Coming soon!'),
+          _PlaceholderTab(emoji: '💊', label: 'Medicine', sublabel: 'Coming soon!'),
+          _PlaceholderTab(emoji: '💬', label: 'Sathi', sublabel: 'Your AI companion'),
           _ProfileTab(
             userData: _userData,
             authService: _authService,
@@ -112,22 +114,40 @@ class _ElderDashboardState extends State<ElderDashboard> {
       builder: (_) => _SosDialog(
         onConfirm: () async {
           Navigator.pop(context);
-          // SOS logic — Phase 6
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '🆘 SOS Alert sent to your caretaker!',
-                style: GoogleFonts.plusJakartaSans(
-                    color: Colors.white, fontSize: 13),
+
+          final uid = _authService.currentUser?.uid;
+          final userData = await _authService.getUserData();
+          final caretakerUid = userData?['linkedTo'] as String?;
+
+          if (uid != null) {
+            await FirebaseFirestore.instance.collection('sos_alerts').add({
+              'elderUid': uid,
+              'caretakerUid': caretakerUid,
+              'resolved': false,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+          }
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '🆘 SOS Alert sent to your caretaker!',
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white,
+                    fontSize: 13,
+                  ),
+                ),
+                backgroundColor: AppColors.error,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                margin: const EdgeInsets.all(16),
+                duration: const Duration(seconds: 4),
               ),
-              backgroundColor: AppColors.error,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              margin: const EdgeInsets.all(16),
-              duration: const Duration(seconds: 4),
-            ),
-          );
+            );
+          }
         },
         onCancel: () => Navigator.pop(context),
       ),
@@ -138,8 +158,7 @@ class _ElderDashboardState extends State<ElderDashboard> {
     await _authService.logout();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-            builder: (_) => const RoleSelectionScreen()),
+        MaterialPageRoute(builder: (_) => const RoleSelectionScreen()),
         (route) => false,
       );
     }
@@ -157,8 +176,7 @@ class _ElderDashboardState extends State<ElderDashboard> {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border(
-            top: BorderSide(color: AppColors.border, width: 1)),
+        border: Border(top: BorderSide(color: AppColors.border, width: 1)),
       ),
       padding: EdgeInsets.only(
         top: 10,
@@ -172,27 +190,21 @@ class _ElderDashboardState extends State<ElderDashboard> {
             onTap: () => setState(() => _currentIndex = i),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     items[i]['emoji']!,
-                    style: TextStyle(
-                        fontSize: isActive ? 22 : 20),
+                    style: TextStyle(fontSize: isActive ? 22 : 20),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     items[i]['label']!,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 10,
-                      fontWeight: isActive
-                          ? FontWeight.w600
-                          : FontWeight.w400,
-                      color: isActive
-                          ? AppColors.primary
-                          : AppColors.textHint,
+                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                      color: isActive ? AppColors.primary : AppColors.textHint,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -215,9 +227,6 @@ class _ElderDashboardState extends State<ElderDashboard> {
   }
 }
 
-// ─────────────────────────────────────────────
-// HOME TAB
-// ─────────────────────────────────────────────
 class _HomeTab extends StatelessWidget {
   final Map<String, dynamic>? userData;
   final bool loadingUser;
@@ -246,55 +255,36 @@ class _HomeTab extends StatelessWidget {
     return SafeArea(
       child: CustomScrollView(
         slivers: [
-          // ── Header ──
-          SliverToBoxAdapter(
-            child: _buildHeader(context),
-          ),
-
-          // ── Body ──
+          SliverToBoxAdapter(child: _buildHeader(context)),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             sliver: StreamBuilder<List<TaskModel>>(
               stream: taskService.getTodayTasks(uid),
               builder: (context, snap) {
                 final tasks = snap.data ?? [];
-                final wellness =
-                    TaskService.calculateWellness(tasks);
+                final wellness = TaskService.calculateWellness(tasks);
                 final todayTasks = tasks.take(3).toList();
 
                 return SliverList(
                   delegate: SliverChildListDelegate([
-                    // Wellness card
-                    _WellnessCard(
-                      wellness: wellness,
-                      tasks: tasks,
-                    )
-                    .animate()
-                    .fadeIn(duration: 500.ms)
-                    .slideY(begin: 0.1, end: 0),
-
+                    _WellnessCard(wellness: wellness, tasks: tasks)
+                        .animate()
+                        .fadeIn(duration: 500.ms)
+                        .slideY(begin: 0.1, end: 0),
                     const SizedBox(height: 20),
-
-                    // Quick actions
-                    _SectionHeader(
-                        title: 'Quick Actions', link: ''),
+                    _SectionHeader(title: 'Quick Actions', link: ''),
                     const SizedBox(height: 10),
                     _QuickActionsGrid()
-                    .animate(delay: 100.ms)
-                    .fadeIn(duration: 500.ms),
-
+                        .animate(delay: 100.ms)
+                        .fadeIn(duration: 500.ms),
                     const SizedBox(height: 20),
-
-                    // Tasks
                     _SectionHeader(
                       title: "Today's Tasks",
                       link: 'See all →',
                       onLinkTap: () {},
                     ),
                     const SizedBox(height: 10),
-
-                    if (snap.connectionState ==
-                        ConnectionState.waiting)
+                    if (snap.connectionState == ConnectionState.waiting)
                       const Center(
                         child: Padding(
                           padding: EdgeInsets.all(20),
@@ -307,26 +297,24 @@ class _HomeTab extends StatelessWidget {
                     else if (tasks.isEmpty)
                       _EmptyTasks()
                     else
-                      ...todayTasks.map((task) =>
-                          _TaskCard(
-                            task: task,
-                            onMarkDone: () =>
-                                taskService.markDone(task.id),
-                          ).animate(
-                            delay: Duration(
-                                milliseconds: 50 *
-                                    todayTasks.indexOf(task)),
-                          ).fadeIn(duration: 400.ms)),
-
+                      ...todayTasks.map(
+                        (task) => _TaskCard(
+                          task: task,
+                          onMarkDone: () => taskService.markDone(task.id),
+                        )
+                            .animate(
+                              delay: Duration(
+                                milliseconds: 50 * todayTasks.indexOf(task),
+                              ),
+                            )
+                            .fadeIn(duration: 400.ms),
+                      ),
                     const SizedBox(height: 20),
-
-                    // Medicine reminder
-                    _SectionHeader(
-                        title: 'Medicine Reminder', link: ''),
+                    _SectionHeader(title: 'Medicine Reminder', link: ''),
                     const SizedBox(height: 10),
                     _MedicineReminderCard()
-                    .animate(delay: 200.ms)
-                    .fadeIn(duration: 500.ms),
+                        .animate(delay: 200.ms)
+                        .fadeIn(duration: 500.ms),
                   ]),
                 );
               },
@@ -342,9 +330,7 @@ class _HomeTab extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border(
-            bottom: BorderSide(
-                color: AppColors.border, width: 1)),
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 1)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -396,8 +382,7 @@ class _HomeTab extends StatelessWidget {
                       ),
                 const SizedBox(height: 3),
                 Text(
-                  DateFormat('EEEE, d MMMM yyyy')
-                      .format(DateTime.now()),
+                  DateFormat('EEEE, d MMMM yyyy').format(DateTime.now()),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 11,
                     color: AppColors.textHint,
@@ -407,26 +392,20 @@ class _HomeTab extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(width: 12),
-
-          // SOS Button
           GestureDetector(
             onTap: onSosPressed,
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: AppColors.sosPale,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: AppColors.sosBorder, width: 1.5),
+                border: Border.all(color: AppColors.sosBorder, width: 1.5),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('🆘',
-                      style: TextStyle(fontSize: 14)),
+                  const Text('🆘', style: TextStyle(fontSize: 14)),
                   const SizedBox(width: 5),
                   Text(
                     'SOS',
@@ -447,17 +426,11 @@ class _HomeTab extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// WELLNESS CARD
-// ─────────────────────────────────────────────
 class _WellnessCard extends StatelessWidget {
   final int wellness;
   final List<TaskModel> tasks;
 
-  const _WellnessCard({
-    required this.wellness,
-    required this.tasks,
-  });
+  const _WellnessCard({required this.wellness, required this.tasks});
 
   String get _wellnessMessage {
     if (wellness >= 80) return 'Amazing! Keep it up! 🌟';
@@ -480,13 +453,11 @@ class _WellnessCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Ring
           SizedBox(
             width: 62,
             height: 62,
             child: Stack(
               children: [
-                // Track
                 SizedBox(
                   width: 62,
                   height: 62,
@@ -494,11 +465,9 @@ class _WellnessCard extends StatelessWidget {
                     value: 1.0,
                     strokeWidth: 6,
                     backgroundColor: Colors.white.withOpacity(0.12),
-                    valueColor: const AlwaysStoppedAnimation(
-                        Colors.transparent),
+                    valueColor: const AlwaysStoppedAnimation(Colors.transparent),
                   ),
                 ),
-                // Fill
                 SizedBox(
                   width: 62,
                   height: 62,
@@ -506,12 +475,10 @@ class _WellnessCard extends StatelessWidget {
                     value: wellness / 100,
                     strokeWidth: 6,
                     backgroundColor: Colors.transparent,
-                    valueColor: const AlwaysStoppedAnimation(
-                        Color(0xFFE8A87C)),
+                    valueColor: const AlwaysStoppedAnimation(Color(0xFFE8A87C)),
                     strokeCap: StrokeCap.round,
                   ),
                 ),
-                // Center text
                 Center(
                   child: Text(
                     '$wellness%',
@@ -525,10 +492,7 @@ class _WellnessCard extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(width: 16),
-
-          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -543,9 +507,7 @@ class _WellnessCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  total > 0
-                      ? '$done of $total tasks completed'
-                      : 'No tasks yet today',
+                  total > 0 ? '$done of $total tasks completed' : 'No tasks yet today',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
                     color: Colors.white.withOpacity(0.55),
@@ -553,15 +515,12 @@ class _WellnessCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                // Progress bar
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
                     value: wellness / 100,
-                    backgroundColor:
-                        Colors.white.withOpacity(0.12),
-                    valueColor: const AlwaysStoppedAnimation(
-                        Color(0xFFE8A87C)),
+                    backgroundColor: Colors.white.withOpacity(0.12),
+                    valueColor: const AlwaysStoppedAnimation(Color(0xFFE8A87C)),
                     minHeight: 5,
                   ),
                 ),
@@ -583,9 +542,6 @@ class _WellnessCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// QUICK ACTIONS GRID
-// ─────────────────────────────────────────────
 class _QuickActionsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -639,15 +595,13 @@ class _QuickActionsGrid extends StatelessWidget {
             decoration: BoxDecoration(
               color: a['bg'] as Color,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                  color: a['border'] as Color, width: 1),
+              border: Border.all(color: a['border'] as Color, width: 1),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(a['emoji'] as String,
-                    style: const TextStyle(fontSize: 26)),
+                Text(a['emoji'] as String, style: const TextStyle(fontSize: 26)),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -678,9 +632,6 @@ class _QuickActionsGrid extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// TASK CARD
-// ─────────────────────────────────────────────
 class _TaskCard extends StatelessWidget {
   final TaskModel task;
   final VoidCallback onMarkDone;
@@ -779,7 +730,6 @@ class _TaskCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Icon
             Container(
               width: 44,
               height: 44,
@@ -788,14 +738,10 @@ class _TaskCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Center(
-                child: Text(task.emoji,
-                    style: const TextStyle(fontSize: 22)),
+                child: Text(task.emoji, style: const TextStyle(fontSize: 22)),
               ),
             ),
-
             const SizedBox(width: 12),
-
-            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -822,11 +768,8 @@ class _TaskCard extends StatelessWidget {
                 ],
               ),
             ),
-
-            // Chip
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: _chipBg,
                 borderRadius: BorderRadius.circular(10),
@@ -847,9 +790,6 @@ class _TaskCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// MEDICINE REMINDER CARD
-// ─────────────────────────────────────────────
 class _MedicineReminderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -858,8 +798,7 @@ class _MedicineReminderCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFFF8F0),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-            color: const Color(0xFFF0D5BC), width: 1),
+        border: Border.all(color: const Color(0xFFF0D5BC), width: 1),
       ),
       child: Row(
         children: [
@@ -871,8 +810,7 @@ class _MedicineReminderCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
             child: const Center(
-              child: Text('💊',
-                  style: TextStyle(fontSize: 24)),
+              child: Text('💊', style: TextStyle(fontSize: 24)),
             ),
           ),
           const SizedBox(width: 14),
@@ -903,8 +841,7 @@ class _MedicineReminderCard extends StatelessWidget {
           GestureDetector(
             onTap: () {},
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
               decoration: BoxDecoration(
                 color: AppColors.primary,
                 borderRadius: BorderRadius.circular(12),
@@ -925,9 +862,6 @@ class _MedicineReminderCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// EMPTY TASKS
-// ─────────────────────────────────────────────
 class _EmptyTasks extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -941,8 +875,7 @@ class _EmptyTasks extends StatelessWidget {
       child: Center(
         child: Column(
           children: [
-            const Text('🌸',
-                style: TextStyle(fontSize: 36)),
+            const Text('🌸', style: TextStyle(fontSize: 36)),
             const SizedBox(height: 10),
             Text(
               'No tasks for today',
@@ -965,9 +898,6 @@ class _EmptyTasks extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// SECTION HEADER
-// ─────────────────────────────────────────────
 class _SectionHeader extends StatelessWidget {
   final String title;
   final String link;
@@ -1009,10 +939,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// PROFILE TAB
-// ─────────────────────────────────────────────
-class _ProfileTab extends StatelessWidget {
+class _ProfileTab extends StatefulWidget {
   final Map<String, dynamic>? userData;
   final AuthService authService;
   final VoidCallback onLogout;
@@ -1024,20 +951,76 @@ class _ProfileTab extends StatelessWidget {
   });
 
   @override
+  State<_ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<_ProfileTab> {
+  Map<String, dynamic>? _caretakerData;
+  bool _loadingCaretaker = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCaretaker();
+  }
+
+  Future<void> _loadCaretaker() async {
+    setState(() => _loadingCaretaker = true);
+
+    final uid = widget.authService.currentUser?.uid;
+    if (uid == null) {
+      setState(() => _loadingCaretaker = false);
+      return;
+    }
+
+    final elderDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get(const GetOptions(source: Source.server));
+
+    final linkedTo = elderDoc.data()?['linkedTo'] as String?;
+
+    if (linkedTo != null && linkedTo.isNotEmpty) {
+      final caretakerDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(linkedTo)
+          .get(const GetOptions(source: Source.server));
+
+      if (mounted) {
+        setState(() {
+          _caretakerData = caretakerDoc.data();
+          _loadingCaretaker = false;
+        });
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _caretakerData = null;
+          _loadingCaretaker = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final name = userData?['name'] ?? 'Elder User';
-    final email = userData?['email'] ?? '';
-    final phone = userData?['phone'] ?? '';
-    final initials = name.isNotEmpty
-        ? name.trim().split(' ').map((w) => w[0]).take(2).join()
-        : 'E';
+    final name = widget.userData?['name'] ?? 'Elder User';
+    final email = widget.userData?['email'] ?? '';
+    final phone = widget.userData?['phone'] ?? '';
+    final initials = name
+        .trim()
+        .split(' ')
+        .map((w) => w.isNotEmpty ? w[0] : '')
+        .take(2)
+        .join()
+        .toUpperCase();
+    final isLinked = _caretakerData != null;
 
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
         child: Column(
           children: [
-            // Avatar
             Container(
               width: 80,
               height: 80,
@@ -1047,7 +1030,7 @@ class _ProfileTab extends StatelessWidget {
               ),
               child: Center(
                 child: Text(
-                  initials.toUpperCase(),
+                  initials,
                   style: GoogleFonts.lora(
                     fontSize: 28,
                     fontWeight: FontWeight.w600,
@@ -1056,9 +1039,7 @@ class _ProfileTab extends StatelessWidget {
                 ),
               ),
             ),
-
             const SizedBox(height: 14),
-
             Text(
               name,
               style: GoogleFonts.lora(
@@ -1067,12 +1048,9 @@ class _ProfileTab extends StatelessWidget {
                 color: AppColors.walnut,
               ),
             ),
-
             const SizedBox(height: 4),
-
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
               decoration: BoxDecoration(
                 color: AppColors.primaryPale,
                 borderRadius: BorderRadius.circular(20),
@@ -1086,52 +1064,41 @@ class _ProfileTab extends StatelessWidget {
                 ),
               ),
             ),
-
-            const SizedBox(height: 28),
-
-            // Info card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.border),
-              ),
+            const SizedBox(height: 24),
+            _card(
               child: Column(
                 children: [
-                  _InfoRow(
-                      emoji: '📧',
-                      label: 'Email',
-                      value: email),
+                  _infoRow('📧', 'Email', email),
                   Divider(color: AppColors.border, height: 24),
-                  _InfoRow(
-                      emoji: '📱',
-                      label: 'Phone',
-                      value: phone),
+                  _infoRow('📱', 'Phone', phone),
                 ],
               ),
             ),
-
-            const SizedBox(height: 24),
-
-            // Logout
+            const SizedBox(height: 14),
+            _loadingCaretaker
+                ? const Center(
+                    child: CircularProgressIndicator(
+                      color: AppColors.primary,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : isLinked
+                    ? _caretakerCard(context)
+                    : _linkButton(context),
+            const SizedBox(height: 14),
             GestureDetector(
-              onTap: onLogout,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.errorPale,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                      color: AppColors.errorBorder),
-                ),
+              onTap: widget.onLogout,
+              child: _card(
+                color: AppColors.errorPale,
+                border: AppColors.errorBorder,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.logout_rounded,
-                        color: AppColors.error, size: 18),
+                    const Icon(
+                      Icons.logout_rounded,
+                      color: AppColors.error,
+                      size: 18,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       'Sign Out',
@@ -1150,17 +1117,180 @@ class _ProfileTab extends StatelessWidget {
       ),
     );
   }
-}
 
-class _InfoRow extends StatelessWidget {
-  final String emoji, label, value;
-  const _InfoRow(
-      {required this.emoji,
-      required this.label,
-      required this.value});
+  Widget _caretakerCard(BuildContext context) {
+    final cName = _caretakerData?['name'] ?? 'Caretaker';
+    final cEmail = _caretakerData?['email'] ?? '';
+    final cPhone = _caretakerData?['phone'] ?? '';
+    final cInitials = cName
+        .trim()
+        .split(' ')
+        .map((w) => w.isNotEmpty ? w[0] : '')
+        .take(2)
+        .join()
+        .toUpperCase();
 
-  @override
-  Widget build(BuildContext context) {
+    return _card(
+      color: AppColors.surfaceGreen,
+      border: AppColors.borderGreen,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.sagePale,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '🤝  Your Caretaker',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.sage,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: AppColors.sageGradient,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    cInitials,
+                    style: GoogleFonts.lora(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      cName,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.walnut,
+                      ),
+                    ),
+                    if (cEmail.isNotEmpty)
+                      Text(
+                        cEmail,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w300,
+                        ),
+                      ),
+                    if (cPhone.isNotEmpty)
+                      Text(
+                        cPhone,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w300,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const LinkCaretakerScreen(isFromProfile: true),
+                ),
+              );
+              setState(() => _loadingCaretaker = true);
+              await _loadCaretaker();
+            },
+            child: Container(
+              width: double.infinity,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.sageLight,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.borderGreen),
+              ),
+              child: Center(
+                child: Text(
+                  'Change Caretaker',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.sage,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _linkButton(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const LinkCaretakerScreen(isFromProfile: true),
+          ),
+        );
+        setState(() => _loadingCaretaker = true);
+        await _loadCaretaker();
+      },
+      child: _card(
+        color: const Color(0xFFFFF8F0),
+        border: const Color(0xFFF0D5BC),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('🤝', style: TextStyle(fontSize: 18)),
+            const SizedBox(width: 8),
+            Text(
+              'Link a Caretaker',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primaryDeep,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _card({required Widget child, Color? color, Color? border}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: color ?? AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: border ?? AppColors.border),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _infoRow(String emoji, String label, String value) {
     return Row(
       children: [
         Text(emoji, style: const TextStyle(fontSize: 18)),
@@ -1168,18 +1298,22 @@ class _InfoRow extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11,
-                  color: AppColors.textHint,
-                  fontWeight: FontWeight.w300,
-                )),
-            Text(value,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  color: AppColors.walnut,
-                  fontWeight: FontWeight.w500,
-                )),
+            Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                color: AppColors.textHint,
+                fontWeight: FontWeight.w300,
+              ),
+            ),
+            Text(
+              value,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                color: AppColors.walnut,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ),
       ],
@@ -1187,15 +1321,16 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// PLACEHOLDER TAB
-// ─────────────────────────────────────────────
 class _PlaceholderTab extends StatelessWidget {
-  final String emoji, label, sublabel;
-  const _PlaceholderTab(
-      {required this.emoji,
-      required this.label,
-      required this.sublabel});
+  final String emoji;
+  final String label;
+  final String sublabel;
+
+  const _PlaceholderTab({
+    required this.emoji,
+    required this.label,
+    required this.sublabel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1205,47 +1340,45 @@ class _PlaceholderTab extends StatelessWidget {
         children: [
           Text(emoji, style: const TextStyle(fontSize: 56)),
           const SizedBox(height: 16),
-          Text(label,
-              style: GoogleFonts.lora(
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                color: AppColors.walnut,
-              )),
+          Text(
+            label,
+            style: GoogleFonts.lora(
+              fontSize: 22,
+              fontWeight: FontWeight.w600,
+              color: AppColors.walnut,
+            ),
+          ),
           const SizedBox(height: 6),
-          Text(sublabel,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 14,
-                color: AppColors.textHint,
-              )),
+          Text(
+            sublabel,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              color: AppColors.textHint,
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-// ─────────────────────────────────────────────
-// SOS DIALOG
-// ─────────────────────────────────────────────
 class _SosDialog extends StatelessWidget {
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
 
-  const _SosDialog(
-      {required this.onConfirm, required this.onCancel});
+  const _SosDialog({required this.onConfirm, required this.onCancel});
 
   @override
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('🆘',
-                style: TextStyle(fontSize: 48)),
+            const Text('🆘', style: TextStyle(fontSize: 48)),
             const SizedBox(height: 14),
             Text(
               'Send SOS Alert?',
@@ -1276,16 +1409,17 @@ class _SosDialog extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: AppColors.background,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                            color: AppColors.border),
+                        border: Border.all(color: AppColors.border),
                       ),
                       child: Center(
-                        child: Text('Cancel',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: AppColors.textSecondary,
-                            )),
+                        child: Text(
+                          'Cancel',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -1301,12 +1435,14 @@ class _SosDialog extends StatelessWidget {
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Center(
-                        child: Text('Send SOS',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            )),
+                        child: Text(
+                          'Send SOS',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
                     ),
                   ),

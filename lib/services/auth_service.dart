@@ -57,7 +57,6 @@ class AuthService {
       });
 
       return null; // success
-
     } on FirebaseAuthException catch (e) {
       return _handleAuthError(e.code);
     } catch (e) {
@@ -69,7 +68,7 @@ class AuthService {
   Future<String?> login({
     required String email,
     required String password,
-    required String expectedRole, // ← NEW: role selected on screen
+    required String expectedRole,
   }) async {
     try {
       // Sign in first
@@ -93,7 +92,7 @@ class AuthService {
 
       // ── ROLE MISMATCH CHECK ──
       if (actualRole != expectedRole) {
-        await _auth.signOut(); // immediately sign out
+        await _auth.signOut();
         if (actualRole == 'elder') {
           return 'This account is registered as an Elder.\n'
               'Please go back and select "I am an Elder" to sign in.';
@@ -104,7 +103,6 @@ class AuthService {
       }
 
       return null; // success — role matches
-
     } on FirebaseAuthException catch (e) {
       return _handleAuthError(e.code);
     } catch (e) {
@@ -162,6 +160,113 @@ class AuthService {
         return 'No internet connection.';
       default:
         return 'Authentication failed. Please try again.';
+    }
+  }
+
+  // ── Check if elder is linked to a caretaker ──
+  Future<bool> isLinkedToCaretaker() async {
+    try {
+      final uid = _auth.currentUser?.uid;
+      if (uid == null) return false;
+      final doc = await _db.collection('users').doc(uid).get();
+      if (!doc.exists) return false;
+      final data = doc.data();
+      if (data == null) return false;
+
+      // Only elders need linking check
+      if (data['role'] != 'elder') return true;
+
+      final linkedTo = data['linkedTo'];
+      return linkedTo != null && linkedTo.toString().trim().isNotEmpty;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ── Search caretakers by name, email, or phone ──
+  Future<List<Map<String, dynamic>>> searchCaretakers(String query) async {
+    try {
+      query = query.trim().toLowerCase();
+      if (query.isEmpty) return [];
+
+      // Get all caretakers then filter client-side
+      // Firestore doesn't support OR queries across fields.
+      final snap = await _db
+          .collection('users')
+          .where('role', isEqualTo: 'caretaker')
+          .get();
+
+      final results = snap.docs
+          .map((d) => {'uid': d.id, ...d.data()})
+          .where((c) {
+        final name = (c['name'] as String? ?? '').toLowerCase();
+        final email = (c['email'] as String? ?? '').toLowerCase();
+        final phone = (c['phone'] as String? ?? '').toLowerCase();
+
+        return name.contains(query) ||
+            email.contains(query) ||
+            phone.contains(query);
+      }).toList();
+
+      return results;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // ── Link elder to caretaker ──
+  Future<String?> linkToCaretaker({
+    required String elderUid,
+    required String caretakerUid,
+  }) async {
+    try {
+      final batch = _db.batch();
+
+      // Elder doc → linkedTo caretaker
+      batch.update(
+        _db.collection('users').doc(elderUid),
+        {'linkedTo': caretakerUid},
+      );
+
+      // Caretaker doc → add elder to linkedElders array
+      batch.update(
+        _db.collection('users').doc(caretakerUid),
+        {
+          'linkedElders': FieldValue.arrayUnion([elderUid]),
+        },
+      );
+
+      await batch.commit();
+      return null; // success
+    } catch (e) {
+      return 'Failed to link. Please try again.';
+    }
+  }
+
+  // ── Unlink elder from current caretaker ──
+  Future<String?> unlinkCaretaker({
+    required String elderUid,
+    required String caretakerUid,
+  }) async {
+    try {
+      final batch = _db.batch();
+
+      batch.update(
+        _db.collection('users').doc(elderUid),
+        {'linkedTo': null},
+      );
+
+      batch.update(
+        _db.collection('users').doc(caretakerUid),
+        {
+          'linkedElders': FieldValue.arrayRemove([elderUid]),
+        },
+      );
+
+      await batch.commit();
+      return null;
+    } catch (e) {
+      return 'Failed to unlink. Please try again.';
     }
   }
 }

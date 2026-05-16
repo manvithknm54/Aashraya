@@ -6,30 +6,26 @@ import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/screens/splash_screen.dart';
 import 'features/auth/screens/role_selection_screen.dart';
+import 'features/auth/screens/link_caretaker_screen.dart';
 import 'features/elder/screens/elder_dashboard.dart';
 import 'features/caretaker/screens/caretaker_dashboard.dart';
 import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
 
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-      systemNavigationBarColor: Color(0xFFFBF7F2),
-      systemNavigationBarIconBrightness: Brightness.dark,
-    ),
-  );
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.dark,
+    systemNavigationBarColor: Color(0xFFFBF7F2),
+    systemNavigationBarIconBrightness: Brightness.dark,
+  ));
 
   runApp(const AashrayaApp());
 }
@@ -61,41 +57,36 @@ class _AppEntryPointState extends State<AppEntryPoint> {
   @override
   void initState() {
     super.initState();
+
     Future.delayed(const Duration(milliseconds: 3600), () {
-      if (mounted) setState(() => _showSplash = false);
+      if (mounted) {
+        setState(() => _showSplash = false);
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showSplash) return const SplashScreen();
+    if (_showSplash) {
+      return const SplashScreen();
+    }
 
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // Still loading auth state
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            backgroundColor: Color(0xFFF5EFE6),
-            body: Center(
-              child: CircularProgressIndicator(
-                color: Color(0xFFD4845A),
-                strokeWidth: 2,
-              ),
-            ),
-          );
+          return _loader();
         }
 
-        // Not logged in
         if (!snapshot.hasData || snapshot.data == null) {
           return const RoleSelectionScreen();
         }
 
-        // Logged in — get role and navigate
-        return FutureBuilder<String?>(
-          future: AuthService().getUserRole(),
-          builder: (context, roleSnap) {
-            if (roleSnap.connectionState == ConnectionState.waiting) {
+        return FutureBuilder<Map<String, dynamic>?>(
+          key: ValueKey(snapshot.data?.uid), // ✅ FIX ADDED HERE
+          future: AuthService().getUserData(),
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
               return const Scaffold(
                 backgroundColor: Color(0xFFF5EFE6),
                 body: Center(
@@ -106,15 +97,46 @@ class _AppEntryPointState extends State<AppEntryPoint> {
                 ),
               );
             }
-            if (roleSnap.data == 'elder') {
+
+            final data = snap.data;
+
+            if (data == null) {
+              return const RoleSelectionScreen();
+            }
+
+            final role = data['role'] as String?;
+            final linkedTo = data['linkedTo'];
+
+            final isLinked =
+                linkedTo != null &&
+                linkedTo.toString().trim().isNotEmpty;
+
+            if (role == 'elder') {
+              if (!isLinked) {
+                return const LinkCaretakerScreen();
+              }
+
               return const ElderDashboard();
-            } else if (roleSnap.data == 'caretaker') {
+            } else if (role == 'caretaker') {
               return const CaretakerDashboard();
             }
+
             return const RoleSelectionScreen();
           },
         );
       },
+    );
+  }
+
+  Widget _loader() {
+    return const Scaffold(
+      backgroundColor: Color(0xFFF5EFE6),
+      body: Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFFD4845A),
+          strokeWidth: 2,
+        ),
+      ),
     );
   }
 }
