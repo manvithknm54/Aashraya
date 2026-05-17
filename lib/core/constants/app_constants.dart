@@ -22,9 +22,19 @@ class AppConstants {
   static const String colSosAlerts = 'sos_alerts';
   static const String colMessages = 'messages';
 
+  // Gemini API
+  static const String geminiApiKey = 'AIzaSyAmqIVGkU0deKRVI5gd3sbP_RM89-wu0Bc';
+  static const String geminiModel = 'gemini-1.5-flash';
+
   // Task Categories
   static const List<String> taskCategories = [
-    'Medicine', 'Exercise', 'Water', 'Walk', 'Food', 'Sleep', 'Other'
+    'Medicine',
+    'Exercise',
+    'Water',
+    'Walk',
+    'Food',
+    'Sleep',
+    'Other',
   ];
 
   // Task Icons (mapped to categories)

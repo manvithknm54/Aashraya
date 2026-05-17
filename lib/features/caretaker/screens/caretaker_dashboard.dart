@@ -8,6 +8,7 @@ import '../../../services/auth_service.dart';
 import '../../../services/task_service.dart';
 import '../../../shared/models/task_model.dart';
 import '../../auth/screens/role_selection_screen.dart';
+import 'elder_detail_screen.dart';
 
 class CaretakerDashboard extends StatefulWidget {
   const CaretakerDashboard({super.key});
@@ -235,7 +236,14 @@ class _HomeTab extends StatelessWidget {
                   _NoElders()
                 else
                   ...elders.map(
-                    (e) => _ElderCard(elder: e)
+                    (e) => GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ElderDetailScreen(elder: e),
+                        ),
+                      ),
+                      child: _ElderCard(elder: e),
+                    )
                         .animate(
                           delay: Duration(
                             milliseconds: 50 * elders.indexOf(e),
@@ -740,7 +748,16 @@ class _EldersTab extends StatelessWidget {
                     : ListView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
                         itemCount: elders.length,
-                        itemBuilder: (_, i) => _ElderCard(elder: elders[i]),
+                        itemBuilder: (_, i) => GestureDetector(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ElderDetailScreen(
+                                elder: elders[i],
+                              ),
+                            ),
+                          ),
+                          child: _ElderCard(elder: elders[i]),
+                        ),
                       ),
           ),
         ],

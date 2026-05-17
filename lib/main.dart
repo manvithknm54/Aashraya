@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/screens/splash_screen.dart';
@@ -9,7 +10,6 @@ import 'features/auth/screens/role_selection_screen.dart';
 import 'features/auth/screens/link_caretaker_screen.dart';
 import 'features/elder/screens/elder_dashboard.dart';
 import 'features/caretaker/screens/caretaker_dashboard.dart';
-import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,12 +20,14 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
 
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: Color(0xFFFBF7F2),
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: Color(0xFFFBF7F2),
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ),
+  );
 
   runApp(const AashrayaApp());
 }
@@ -58,18 +60,14 @@ class _AppEntryPointState extends State<AppEntryPoint> {
   void initState() {
     super.initState();
 
-    Future.delayed(const Duration(milliseconds: 3600), () {
-      if (mounted) {
-        setState(() => _showSplash = false);
-      }
+    Future.delayed(const Duration(milliseconds: 3000), () {
+      if (mounted) setState(() => _showSplash = false);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showSplash) {
-      return const SplashScreen();
-    }
+    if (_showSplash) return const SplashScreen();
 
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
@@ -78,45 +76,28 @@ class _AppEntryPointState extends State<AppEntryPoint> {
           return _loader();
         }
 
-        if (!snapshot.hasData || snapshot.data == null) {
-          return const RoleSelectionScreen();
-        }
+        if (!snapshot.hasData) return const RoleSelectionScreen();
 
         return FutureBuilder<Map<String, dynamic>?>(
-          key: ValueKey(snapshot.data?.uid), // ✅ FIX ADDED HERE
-          future: AuthService().getUserData(),
+          key: ValueKey(snapshot.data!.uid),
+          future: _getUserData(snapshot.data!.uid),
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
-              return const Scaffold(
-                backgroundColor: Color(0xFFF5EFE6),
-                body: Center(
-                  child: CircularProgressIndicator(
-                    color: Color(0xFFD4845A),
-                    strokeWidth: 2,
-                  ),
-                ),
-              );
+              return _loader();
             }
 
             final data = snap.data;
-
-            if (data == null) {
-              return const RoleSelectionScreen();
-            }
+            if (data == null) return const RoleSelectionScreen();
 
             final role = data['role'] as String?;
             final linkedTo = data['linkedTo'];
-
             final isLinked =
-                linkedTo != null &&
-                linkedTo.toString().trim().isNotEmpty;
+                linkedTo != null && linkedTo.toString().trim().isNotEmpty;
 
             if (role == 'elder') {
-              if (!isLinked) {
-                return const LinkCaretakerScreen();
-              }
-
-              return const ElderDashboard();
+              return isLinked
+                  ? const ElderDashboard()
+                  : const LinkCaretakerScreen();
             } else if (role == 'caretaker') {
               return const CaretakerDashboard();
             }
@@ -126,6 +107,19 @@ class _AppEntryPointState extends State<AppEntryPoint> {
         );
       },
     );
+  }
+
+  Future<Map<String, dynamic>?> _getUserData(String uid) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get(const GetOptions(source: Source.serverAndCache));
+
+      return doc.data();
+    } catch (e) {
+      return null;
+    }
   }
 
   Widget _loader() {
