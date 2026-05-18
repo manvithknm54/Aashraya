@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
+import 'services/notification_service.dart';
 import 'features/auth/screens/splash_screen.dart';
 import 'features/auth/screens/role_selection_screen.dart';
 import 'features/auth/screens/link_caretaker_screen.dart';
@@ -14,6 +15,8 @@ import 'features/caretaker/screens/caretaker_dashboard.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await NotificationService.init();
+  await NotificationService.scheduleEveningReport();
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -59,7 +62,6 @@ class _AppEntryPointState extends State<AppEntryPoint> {
   @override
   void initState() {
     super.initState();
-
     Future.delayed(const Duration(milliseconds: 3000), () {
       if (mounted) setState(() => _showSplash = false);
     });
@@ -72,32 +74,24 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _loader();
-        }
-
+        if (snapshot.connectionState == ConnectionState.waiting) return _loader();
         if (!snapshot.hasData) return const RoleSelectionScreen();
 
         return FutureBuilder<Map<String, dynamic>?>(
           key: ValueKey(snapshot.data!.uid),
           future: _getUserData(snapshot.data!.uid),
           builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
-              return _loader();
-            }
+            if (snap.connectionState == ConnectionState.waiting) return _loader();
 
             final data = snap.data;
             if (data == null) return const RoleSelectionScreen();
 
             final role = data['role'] as String?;
             final linkedTo = data['linkedTo'];
-            final isLinked =
-                linkedTo != null && linkedTo.toString().trim().isNotEmpty;
+            final isLinked = linkedTo != null && linkedTo.toString().trim().isNotEmpty;
 
             if (role == 'elder') {
-              return isLinked
-                  ? const ElderDashboard()
-                  : const LinkCaretakerScreen();
+              return isLinked ? const ElderDashboard() : const LinkCaretakerScreen();
             } else if (role == 'caretaker') {
               return const CaretakerDashboard();
             }
@@ -115,7 +109,6 @@ class _AppEntryPointState extends State<AppEntryPoint> {
           .collection('users')
           .doc(uid)
           .get(const GetOptions(source: Source.serverAndCache));
-
       return doc.data();
     } catch (e) {
       return null;
@@ -126,10 +119,7 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     return const Scaffold(
       backgroundColor: Color(0xFFF5EFE6),
       body: Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFFD4845A),
-          strokeWidth: 2,
-        ),
+        child: CircularProgressIndicator(color: Color(0xFFD4845A), strokeWidth: 2),
       ),
     );
   }

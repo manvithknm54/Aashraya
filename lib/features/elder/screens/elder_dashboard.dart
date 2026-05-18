@@ -6,9 +6,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/task_service.dart';
+import '../../../services/notification_service.dart';
+import '../../../services/email_service.dart';
 import '../../../shared/models/task_model.dart';
 import '../../../shared/widgets/aashraya_text_field.dart';
 import '../../auth/screens/role_selection_screen.dart';
@@ -56,6 +59,9 @@ class _ElderDashboardState extends State<ElderDashboard> {
             .doc(uid)
             .update({'firstLogin': false});
       }
+
+      // Reset yesterday's pending tasks
+      await _taskService.markMidnightReset(uid);
     }
   }
 
@@ -82,6 +88,18 @@ class _ElderDashboardState extends State<ElderDashboard> {
     setState(() => _currentIndex = 1);
   }
 
+  void _openSathiSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _SathiVoiceSheet(
+        userName: _firstName,
+        getResponse: _SathiFloatingButtonState.getStaticResponse,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -101,6 +119,7 @@ class _ElderDashboardState extends State<ElderDashboard> {
                 authService: _authService,
                 onSosPressed: _handleSos,
                 onSeeAllTasks: _switchToTasksTab,
+                onTalkToSathi: _openSathiSheet,
               ),
               _TasksTab(
                 uid: _authService.currentUser?.uid ?? '',
@@ -150,7 +169,7 @@ class _ElderDashboardState extends State<ElderDashboard> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Your caretaker will be immediately notified.',
+                'Your caretaker will be immediately notified via app, SMS and email.',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 13,
                   color: AppColors.textSecondary,
@@ -221,22 +240,57 @@ class _ElderDashboardState extends State<ElderDashboard> {
     final uid = _authService.currentUser?.uid;
     final userData = await _authService.getUserData();
     final caretakerUid = userData?['linkedTo'] as String?;
+    final elderName = userData?['name'] ?? 'Elder';
 
+    // 1. Write SOS to Firestore
     if (uid != null) {
       await FirebaseFirestore.instance.collection('sos_alerts').add({
         'elderUid': uid,
-        'elderName': userData?['name'] ?? 'Elder',
+        'elderName': elderName,
         'caretakerUid': caretakerUid,
         'resolved': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
     }
 
+    // 2. Show local notification
+    await NotificationService.showNow(
+      title: '🆘 SOS Sent',
+      body: 'Your caretaker has been alerted immediately.',
+      id: 999,
+    );
+
+    // 3. Get caretaker details + send email
+    if (caretakerUid != null) {
+      final cDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(caretakerUid)
+          .get();
+
+      if (cDoc.exists) {
+        final cData = cDoc.data()!;
+        final cEmail = cData['email'] as String? ?? '';
+        final alertTime = DateFormat('d MMM yyyy, h:mm a')
+            .format(DateTime.now());
+
+        if (cEmail.isNotEmpty) {
+          final sent = await EmailService.sendSosAlert(
+            caretakerEmail: cEmail,
+            elderName: elderName,
+            alertTime: alertTime,
+          );
+          debugPrint(sent
+              ? 'SOS email sent ✅'
+              : 'SOS email failed ❌');
+        }
+      }
+    }
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '🆘 Alert sent to your caretaker!',
+            '🆘 Alert sent! Caretaker notified via app & email.',
             style: GoogleFonts.plusJakartaSans(
               color: Colors.white,
               fontSize: 13,
@@ -248,7 +302,7 @@ class _ElderDashboardState extends State<ElderDashboard> {
             borderRadius: BorderRadius.circular(12),
           ),
           margin: const EdgeInsets.all(16),
-          duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 5),
         ),
       );
     }
@@ -331,6 +385,7 @@ class _HomeTab extends StatelessWidget {
   final AuthService authService;
   final VoidCallback onSosPressed;
   final VoidCallback onSeeAllTasks;
+  final VoidCallback onTalkToSathi;
 
   const _HomeTab({
     required this.userData,
@@ -342,6 +397,7 @@ class _HomeTab extends StatelessWidget {
     required this.authService,
     required this.onSosPressed,
     required this.onSeeAllTasks,
+    required this.onTalkToSathi,
   });
 
   @override
@@ -358,8 +414,9 @@ class _HomeTab extends StatelessWidget {
               stream: taskService.getTodayTasks(uid),
               builder: (context, snap) {
                 final tasks = snap.data ?? [];
+                final incompleteTasks =
+                    tasks.where((t) => !t.isCompleted).toList();
                 final wellness = TaskService.calculateWellness(tasks);
-                final todayTasks = tasks.take(3).toList();
 
                 return SliverList(
                   delegate: SliverChildListDelegate([
@@ -370,7 +427,7 @@ class _HomeTab extends StatelessWidget {
                     const SizedBox(height: 20),
                     _SectionHeader(title: 'Quick Actions', link: ''),
                     const SizedBox(height: 10),
-                    _QuickActionsGrid()
+                    _QuickActionsGrid(onTalkToSathi: onTalkToSathi)
                         .animate(delay: 100.ms)
                         .fadeIn(duration: 500.ms),
                     const SizedBox(height: 20),
@@ -390,17 +447,50 @@ class _HomeTab extends StatelessWidget {
                           ),
                         ),
                       )
-                    else if (tasks.isEmpty)
-                      _EmptyTasks()
+                    else if (incompleteTasks.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceGreen,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: AppColors.borderGreen),
+                        ),
+                        child: Row(
+                          children: [
+                            const Text('🎉', style: TextStyle(fontSize: 32)),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'All tasks completed!',
+                                    style: GoogleFonts.lora(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.sage,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Great job today 🌸',
+                                    style: AppTextStyles.bodyMedium(),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
                     else
-                      ...todayTasks.map(
+                      ...incompleteTasks.map(
                         (task) => _TaskCard(
                           task: task,
                           onMarkDone: () => taskService.markDone(task.id),
                         )
                             .animate(
                               delay: Duration(
-                                milliseconds: 50 * todayTasks.indexOf(task),
+                                milliseconds:
+                                    50 * incompleteTasks.indexOf(task),
                               ),
                             )
                             .fadeIn(duration: 400.ms),
@@ -635,106 +725,88 @@ class _WellnessCard extends StatelessWidget {
 }
 
 class _QuickActionsGrid extends StatelessWidget {
+  final VoidCallback onTalkToSathi;
+
+  const _QuickActionsGrid({required this.onTalkToSathi});
+
   @override
   Widget build(BuildContext context) {
-    final actions = [
-      {
-        'emoji': '💊',
-        'label': 'Medicine Scan',
-        'sub': 'Verify your tablet',
-        'bg': const Color(0xFFFFF8F0),
-        'border': const Color(0xFFF0D5BC),
-      },
-      {
-        'emoji': '💧',
-        'label': 'Log Water',
-        'sub': 'Track your intake',
-        'bg': const Color(0xFFF0F7FF),
-        'border': const Color(0xFFBFE0F5),
-      },
-      {
-        'emoji': '🚶',
-        'label': 'Start Walk',
-        'sub': '20 min recommended',
-        'bg': AppColors.surfaceGreen,
-        'border': AppColors.borderGreen,
-      },
-      {
-        'emoji': '💬',
-        'label': 'Talk to Sathi',
-        'sub': 'Your AI companion',
-        'bg': const Color(0xFFF8F0FF),
-        'border': const Color(0xFFE8D5F0),
-      },
-    ];
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.55,
-      ),
-      itemCount: actions.length,
-      itemBuilder: (_, i) {
-        final a = actions[i];
-
-        return GestureDetector(
-          onTap: i == 3
-              ? () {
-                  final dashboardState =
-                      context.findAncestorStateOfType<_ElderDashboardState>();
-                  showModalBottomSheet(
-                    context: context,
-                    backgroundColor: Colors.transparent,
-                    isScrollControlled: true,
-                    builder: (_) => _SathiVoiceSheet(
-                      userName: dashboardState?._firstName ?? 'Friend',
-                      getResponse: _SathiFloatingButtonState.getStaticResponse,
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8F0),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFF0D5BC)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('💊', style: TextStyle(fontSize: 28)),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Medicine\nScanner',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.walnut,
                     ),
-                  );
-                }
-              : () {},
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: a['bg'] as Color,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: a['border'] as Color, width: 1),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(a['emoji'] as String, style: const TextStyle(fontSize: 26)),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      a['label'] as String,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.walnut,
-                      ),
+                  ),
+                  Text(
+                    'Coming soon',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      color: AppColors.textHint,
+                      fontWeight: FontWeight.w300,
                     ),
-                    Text(
-                      a['sub'] as String,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 10,
-                        color: AppColors.textHint,
-                        fontWeight: FontWeight.w300,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
           ),
-        );
-      },
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: GestureDetector(
+            onTap: onTalkToSathi,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F0FF),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFE8D5F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('🤗', style: TextStyle(fontSize: 28)),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Talk to\nSathi',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.walnut,
+                    ),
+                  ),
+                  Text(
+                    'Your companion',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      color: AppColors.textHint,
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -743,7 +815,10 @@ class _TaskCard extends StatelessWidget {
   final TaskModel task;
   final VoidCallback onMarkDone;
 
-  const _TaskCard({required this.task, required this.onMarkDone});
+  const _TaskCard({
+    required this.task,
+    required this.onMarkDone,
+  });
 
   Color get _borderColor {
     switch (task.status) {
@@ -889,42 +964,6 @@ class _TaskCard extends StatelessWidget {
                   color: _chipText,
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyTasks extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Center(
-        child: Column(
-          children: [
-            const Text('🌸', style: TextStyle(fontSize: 36)),
-            const SizedBox(height: 10),
-            Text(
-              'No tasks for today',
-              style: GoogleFonts.lora(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.walnut,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Your caretaker will add tasks for you',
-              style: AppTextStyles.bodyMedium(),
-              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -1440,6 +1479,15 @@ class _TasksTabState extends State<_TasksTab> {
                 }
 
                 final tasks = snap.data ?? [];
+                final incomplete = tasks.where((t) => !t.isCompleted).toList()
+                  ..sort((a, b) => a.dueTime.compareTo(b.dueTime));
+                final complete = tasks.where((t) => t.isCompleted).toList()
+                  ..sort(
+                    (a, b) => (b.completedAt ?? b.dueTime).compareTo(
+                      a.completedAt ?? a.dueTime,
+                    ),
+                  );
+                final sorted = [...incomplete, ...complete];
 
                 if (tasks.isEmpty) {
                   return Center(
@@ -1468,11 +1516,36 @@ class _TasksTabState extends State<_TasksTab> {
 
                 return ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                  itemCount: tasks.length,
-                  itemBuilder: (_, i) => _FullTaskCard(
-                    task: tasks[i],
-                    taskService: widget.taskService,
-                  ),
+                  itemCount: sorted.length +
+                      (incomplete.isNotEmpty && complete.isNotEmpty ? 1 : 0),
+                  itemBuilder: (_, i) {
+                    if (incomplete.isNotEmpty &&
+                        complete.isNotEmpty &&
+                        i == incomplete.length) {
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+                        child: Text(
+                          '✅ Completed',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.sage,
+                          ),
+                        ),
+                      );
+                    }
+
+                    final taskIndex = incomplete.isNotEmpty &&
+                            complete.isNotEmpty &&
+                            i > incomplete.length
+                        ? i - 1
+                        : i;
+
+                    return _FullTaskCard(
+                      task: sorted[taskIndex],
+                      taskService: widget.taskService,
+                    );
+                  },
                 );
               },
             ),
@@ -1525,7 +1598,7 @@ class _AddTaskFormState extends State<_AddTaskForm> {
     setState(() => _saving = true);
 
     final now = DateTime.now();
-    final due = DateTime(
+    final reminderTime = DateTime(
       now.year,
       now.month,
       now.day,
@@ -1535,17 +1608,27 @@ class _AddTaskFormState extends State<_AddTaskForm> {
 
     final cat = _categories.firstWhere((c) => c['label'] == _category);
 
-    await FirebaseFirestore.instance.collection('tasks').add({
+    final docRef = await FirebaseFirestore.instance.collection('tasks').add({
       'userId': widget.uid,
       'title': _titleCtrl.text.trim(),
       'category': _category.toLowerCase(),
       'emoji': cat['emoji'],
-      'dueTime': Timestamp.fromDate(due),
+      'dueTime': Timestamp.fromDate(reminderTime),
       'status': 'pending',
       'isCompleted': false,
       'completedAt': null,
       'notes': '',
+      'createdAt': FieldValue.serverTimestamp(),
     });
+
+    if (reminderTime.isAfter(DateTime.now())) {
+      await NotificationService.scheduleTaskReminder(
+        id: docRef.id.hashCode.abs(),
+        title: _titleCtrl.text.trim(),
+        emoji: cat['emoji']!,
+        dueTime: reminderTime,
+      );
+    }
 
     setState(() => _saving = false);
     widget.onDone();
@@ -1643,7 +1726,7 @@ class _AddTaskFormState extends State<_AddTaskForm> {
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    'Due time: ${_time.format(context)}',
+                    'Reminder time: ${_time.format(context)}',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       color: AppColors.walnut,
@@ -2151,7 +2234,6 @@ class _SathiVoiceSheetState extends State<_SathiVoiceSheet>
                     fontSize: 12,
                     color:
                         _isListening ? AppColors.primary : AppColors.textHint,
-                    fontWeight: FontWeight.w400,
                   ),
                 ),
                 if (_isResponding)

@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/task_service.dart';
+import '../../../services/report_service.dart';
+import '../../../services/notification_service.dart';
 import '../../../shared/models/task_model.dart';
 import '../../auth/screens/role_selection_screen.dart';
 import 'elder_detail_screen.dart';
@@ -37,8 +39,8 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
     if (uid == null) return;
 
     final linkedElders = List<String>.from(data?['linkedElders'] ?? []);
-
     final elders = <Map<String, dynamic>>[];
+
     for (final elderUid in linkedElders) {
       final doc = await FirebaseFirestore.instance
           .collection('users')
@@ -68,6 +70,8 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
         _loading = false;
       });
     }
+
+    await NotificationService.scheduleDailyReportReminder();
   }
 
   String get _greeting {
@@ -105,11 +109,11 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
             loading: _loading,
           ),
           _EldersTab(elders: _elders, loading: _loading),
-          _ReportsTab(elders: _elders),
-          _CaretakerProfileTab(
-            userData: _userData,
-            onLogout: _logout,
+          _ReportsTab(
+            elders: _elders,
+            caretakerUid: _auth.currentUser?.uid ?? '',
           ),
+          _CaretakerProfileTab(userData: _userData, onLogout: _logout),
         ],
       ),
       bottomNavigationBar: _buildNav(),
@@ -174,6 +178,10 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HOME TAB
+// ─────────────────────────────────────────────────────────────────────────────
+
 class _HomeTab extends StatelessWidget {
   final String greeting;
   final String firstName;
@@ -199,10 +207,7 @@ class _HomeTab extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _SosSection(
-                  elders: elders,
-                  sosStream: sosStream,
-                ),
+                _SosSection(elders: elders, sosStream: sosStream),
                 const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -340,6 +345,7 @@ class _HomeTab extends StatelessWidget {
 
 class _StatsRow extends StatelessWidget {
   final List<Map<String, dynamic>> elders;
+
   const _StatsRow({required this.elders});
 
   @override
@@ -399,6 +405,10 @@ class _StatBox extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SOS SECTION
+// ─────────────────────────────────────────────────────────────────────────────
+
 class _SosSection extends StatelessWidget {
   final List<Map<String, dynamic>> elders;
   final Stream<QuerySnapshot>? sosStream;
@@ -410,17 +420,11 @@ class _SosSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (elders.isEmpty || sosStream == null) {
-      return const SizedBox.shrink();
-    }
+    if (elders.isEmpty || sosStream == null) return const SizedBox.shrink();
 
     return StreamBuilder<QuerySnapshot>(
       stream: sosStream,
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
-          return const SizedBox.shrink();
-        }
-
         if (!snap.hasData || snap.data!.docs.isEmpty) {
           return const SizedBox.shrink();
         }
@@ -458,10 +462,7 @@ class _SosSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.sosPale,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppColors.sosBorder,
-                    width: 1.5,
-                  ),
+                  border: Border.all(color: AppColors.sosBorder, width: 1.5),
                 ),
                 child: Row(
                   children: [
@@ -525,8 +526,13 @@ class _SosSection extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ELDER CARD
+// ─────────────────────────────────────────────────────────────────────────────
+
 class _ElderCard extends StatelessWidget {
   final Map<String, dynamic> elder;
+
   const _ElderCard({required this.elder});
 
   @override
@@ -555,6 +561,7 @@ class _ElderCard extends StatelessWidget {
 
         Color pillColor = AppColors.sagePale;
         Color pillText = AppColors.sage;
+
         if (wellness < 50) {
           pillColor = AppColors.errorPale;
           pillText = AppColors.error;
@@ -660,13 +667,14 @@ class _ElderCard extends StatelessWidget {
                 children: [
                   _Chip('✓ $done Done', AppColors.sagePale, AppColors.sage),
                   const SizedBox(width: 6),
-                  if (urgent > 0)
+                  if (urgent > 0) ...[
                     _Chip(
                       '! $urgent Urgent',
                       AppColors.primaryPale,
                       AppColors.primaryDeep,
                     ),
-                  if (urgent > 0) const SizedBox(width: 6),
+                    const SizedBox(width: 6),
+                  ],
                   _Chip(
                     '~ $pending Pending',
                     AppColors.background,
@@ -708,6 +716,10 @@ class _Chip extends StatelessWidget {
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ELDERS TAB
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _EldersTab extends StatelessWidget {
   final List<Map<String, dynamic>> elders;
@@ -766,41 +778,417 @@ class _EldersTab extends StatelessWidget {
   }
 }
 
-class _ReportsTab extends StatelessWidget {
+// ─────────────────────────────────────────────────────────────────────────────
+// REPORTS TAB  ← FIX 2: force server fetch, reload after generate/elder change
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ReportsTab extends StatefulWidget {
   final List<Map<String, dynamic>> elders;
-  const _ReportsTab({required this.elders});
+  final String caretakerUid;
+
+  const _ReportsTab({
+    required this.elders,
+    required this.caretakerUid,
+  });
+
+  @override
+  State<_ReportsTab> createState() => _ReportsTabState();
+}
+
+class _ReportsTabState extends State<_ReportsTab> {
+  String? _selectedElderUid;
+  bool _generating = false;
+  final _reportService = ReportService();
+
+  // ── Fix 2: replace StreamBuilder with manual server fetch ──
+  List<QueryDocumentSnapshot> _reportDocs = [];
+  bool _loadingReports = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.elders.isNotEmpty) {
+      _selectedElderUid = widget.elders.first['uid'];
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadReports());
+  }
+
+  Future<void> _loadReports() async {
+    if (_selectedElderUid == null) return;
+    setState(() => _loadingReports = true);
+
+    final snap = await FirebaseFirestore.instance
+        .collection('reports')
+        .where('elderUid', isEqualTo: _selectedElderUid)
+        .get(const GetOptions(source: Source.server)); // force server
+
+    final filtered = snap.docs.where((d) {
+      final data = d.data() as Map<String, dynamic>;
+      return data['caretakerUid'] == widget.caretakerUid;
+    }).toList();
+
+    // Sort by date descending
+    filtered.sort((a, b) {
+      final aDate =
+          ((a.data() as Map<String, dynamic>)['date'] as Timestamp?)?.toDate();
+      final bDate =
+          ((b.data() as Map<String, dynamic>)['date'] as Timestamp?)?.toDate();
+      if (aDate == null || bDate == null) return 0;
+      return bDate.compareTo(aDate);
+    });
+
+    if (mounted) {
+      setState(() {
+        _reportDocs = filtered;
+        _loadingReports = false;
+      });
+    }
+  }
+
+  Future<void> _generateForElder() async {
+    if (_selectedElderUid == null) return;
+    setState(() => _generating = true);
+
+    final elder = widget.elders.firstWhere(
+        (e) => e['uid'] == _selectedElderUid,
+        orElse: () => {});
+
+    await _reportService.generateDailyReport(
+      elderUid: _selectedElderUid!,
+      elderName: elder['name'] ?? 'Elder',
+      caretakerUid: widget.caretakerUid,
+    );
+
+    setState(() => _generating = false);
+
+    // Reload reports after generating
+    await _loadReports();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('📊 Report generated!',
+            style: GoogleFonts.plusJakartaSans(color: Colors.white)),
+        backgroundColor: AppColors.sage,
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('📊', style: TextStyle(fontSize: 56)),
-            const SizedBox(height: 16),
-            Text(
-              'Daily Reports',
-              style: GoogleFonts.lora(
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                color: AppColors.walnut,
-              ),
+      child: Column(
+        children: [
+          // ── Header ──────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border(bottom: BorderSide(color: AppColors.border)),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Coming in Phase 9',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 14,
-                color: AppColors.textHint,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Reports',
+                    style: GoogleFonts.lora(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.walnut,
+                    )),
+                const SizedBox(height: 14),
+
+                // Elder selector chips
+                if (widget.elders.length > 1)
+                  SizedBox(
+                    height: 36,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: widget.elders.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (_, i) {
+                        final e = widget.elders[i];
+                        final sel = _selectedElderUid == e['uid'];
+                        return GestureDetector(
+                          onTap: () {
+                            setState(() => _selectedElderUid = e['uid']);
+                            _loadReports(); // reload when elder changes
+                          },
+                          child: AnimatedContainer(
+                            duration: 200.ms,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: sel
+                                  ? AppColors.walnut
+                                  : AppColors.background,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: sel
+                                    ? AppColors.walnut
+                                    : AppColors.border,
+                              ),
+                            ),
+                            child: Text(
+                              e['name']?.toString().split(' ').first ?? 'Elder',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: sel ? Colors.white : AppColors.walnut,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                const SizedBox(height: 14),
+
+                // Generate button
+                GestureDetector(
+                  onTap: _generating ? null : _generateForElder,
+                  child: Container(
+                    width: double.infinity,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: _generating ? null : AppColors.sageGradient,
+                      color: _generating ? AppColors.border : null,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Center(
+                      child: _generating
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ))
+                          : Text(
+                              '📄 Generate Today\'s Report',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              )),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+
+          // ── Reports list (Fix 2: FutureBuilder-style with _reportDocs) ──
+          Expanded(
+            child: _selectedElderUid == null
+                ? Center(
+                    child: Text('No elders linked',
+                        style: AppTextStyles.bodyMedium()))
+                : _loadingReports
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                            color: AppColors.sage, strokeWidth: 2))
+                    : _reportDocs.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Text('📊',
+                                    style: TextStyle(fontSize: 48)),
+                                const SizedBox(height: 12),
+                                Text('No reports yet',
+                                    style: GoogleFonts.lora(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.walnut,
+                                    )),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Tap "Generate Today\'s Report"\nto create one now',
+                                  style: AppTextStyles.bodyMedium(),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                            itemCount: _reportDocs.length,
+                            itemBuilder: (_, i) {
+                              final doc = _reportDocs[i];
+                              final data =
+                                  doc.data() as Map<String, dynamic>;
+                              final date =
+                                  (data['date'] as Timestamp).toDate();
+                              final isToday =
+                                  DateFormat('ddMMyyyy').format(date) ==
+                                      DateFormat('ddMMyyyy')
+                                          .format(DateTime.now());
+
+                              return Dismissible(
+                                key: Key(doc.id),
+                                direction: DismissDirection.endToStart,
+                                background: Container(
+                                  margin:
+                                      const EdgeInsets.only(bottom: 10),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.errorPale,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  alignment: Alignment.centerRight,
+                                  padding:
+                                      const EdgeInsets.only(right: 20),
+                                  child: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: AppColors.error,
+                                    size: 24,
+                                  ),
+                                ),
+                                onDismissed: (_) async {
+                                  await FirebaseFirestore.instance
+                                      .collection('reports')
+                                      .doc(doc.id)
+                                      .delete();
+                                  await _loadReports();
+                                },
+                                child: Container(
+                                  margin:
+                                      const EdgeInsets.only(bottom: 10),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.surface,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                        color: AppColors.border),
+                                  ),
+                                  child: Column(children: [
+                                    Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Row(children: [
+                                        Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            color: AppColors.background,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                                color: AppColors.border),
+                                          ),
+                                          child: const Center(
+                                            child: Text('📊',
+                                                style: TextStyle(
+                                                    fontSize: 22)),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(children: [
+                                                Text(
+                                                  DateFormat(
+                                                          'EEEE, d MMM yyyy')
+                                                      .format(date),
+                                                  style: GoogleFonts
+                                                      .plusJakartaSans(
+                                                    fontSize: 13,
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                    color: AppColors.walnut,
+                                                  ),
+                                                ),
+                                                if (isToday) ...[
+                                                  const SizedBox(width: 6),
+                                                  Container(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2),
+                                                    decoration:
+                                                        BoxDecoration(
+                                                      color:
+                                                          AppColors.sagePale,
+                                                      borderRadius:
+                                                          BorderRadius
+                                                              .circular(6),
+                                                    ),
+                                                    child: Text('Today',
+                                                        style: GoogleFonts
+                                                            .plusJakartaSans(
+                                                          fontSize: 9,
+                                                          color:
+                                                              AppColors.sage,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        )),
+                                                  ),
+                                                ],
+                                              ]),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                '${data['completedTasks']}/${data['totalTasks']} done · ${data['wellness']}% wellness'
+                                                '${(data['sosCount'] ?? 0) > 0 ? ' · 🆘 ${data['sosCount']} SOS' : ''}',
+                                                style: GoogleFonts
+                                                    .plusJakartaSans(
+                                                  fontSize: 11,
+                                                  color: AppColors.textHint,
+                                                  fontWeight:
+                                                      FontWeight.w300,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ]),
+                                    ),
+
+                                    // Download PDF button
+                                    GestureDetector(
+                                      onTap: () => _reportService
+                                          .generateAndSharePdf(data),
+                                      child: Container(
+                                        margin: const EdgeInsets.fromLTRB(
+                                            14, 0, 14, 14),
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.background,
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          border: Border.all(
+                                              color: AppColors.border),
+                                        ),
+                                        child: Center(
+                                          child: Text('📥 Download PDF',
+                                              style: GoogleFonts
+                                                  .plusJakartaSans(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                                color: AppColors.walnut,
+                                              )),
+                                        ),
+                                      ),
+                                    ),
+                                  ]),
+                                ),
+                              );
+                            },
+                          ),
+          ),
+        ],
       ),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILE TAB
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CaretakerProfileTab extends StatelessWidget {
   final Map<String, dynamic>? userData;
@@ -858,7 +1246,8 @@ class _CaretakerProfileTab extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
               decoration: BoxDecoration(
                 color: AppColors.sagePale,
                 borderRadius: BorderRadius.circular(20),
@@ -966,6 +1355,10 @@ class _PRow extends StatelessWidget {
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED WIDGETS
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _NoElders extends StatelessWidget {
   @override

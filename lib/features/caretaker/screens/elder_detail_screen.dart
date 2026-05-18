@@ -5,10 +5,24 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../services/task_service.dart';
 import '../../../shared/models/task_model.dart';
+import '../../../shared/widgets/aashraya_text_field.dart';
 
 class ElderDetailScreen extends StatelessWidget {
   final Map<String, dynamic> elder;
   const ElderDetailScreen({super.key, required this.elder});
+
+  void _showAddTaskSheet(
+      BuildContext context, String elderUid, String elderName) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _CaretakerAddTaskSheet(
+        elderUid: elderUid,
+        elderName: elderName,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,6 +36,17 @@ class ElderDetailScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showAddTaskSheet(context, uid, name),
+        backgroundColor: AppColors.walnut,
+        icon: const Icon(Icons.add_rounded, color: Colors.white),
+        label: Text('Add Task',
+            style: GoogleFonts.plusJakartaSans(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            )),
+      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -287,6 +312,264 @@ class _DetailTaskCard extends StatelessWidget {
           ),
         ),
       ]),
+    );
+  }
+}
+
+class _CaretakerAddTaskSheet extends StatefulWidget {
+  final String elderUid;
+  final String elderName;
+  const _CaretakerAddTaskSheet({
+    required this.elderUid,
+    required this.elderName,
+  });
+
+  @override
+  State<_CaretakerAddTaskSheet> createState() =>
+      _CaretakerAddTaskSheetState();
+}
+
+class _CaretakerAddTaskSheetState
+    extends State<_CaretakerAddTaskSheet> {
+  final _titleCtrl = TextEditingController();
+  String _category = 'Medicine';
+  TimeOfDay _time = TimeOfDay.now();
+  bool _saving = false;
+
+  final _categories = [
+    {'label': 'Medicine', 'emoji': '💊'},
+    {'label': 'Walk', 'emoji': '🚶'},
+    {'label': 'Water', 'emoji': '💧'},
+    {'label': 'Exercise', 'emoji': '🏃'},
+    {'label': 'Food', 'emoji': '🍽️'},
+    {'label': 'Sleep', 'emoji': '😴'},
+    {'label': 'Other', 'emoji': '📋'},
+  ];
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_titleCtrl.text.trim().isEmpty) return;
+    setState(() => _saving = true);
+
+    final now = DateTime.now();
+    final reminderTime = DateTime(
+      now.year, now.month, now.day,
+      _time.hour, _time.minute,
+    );
+
+    final cat = _categories.firstWhere(
+        (c) => c['label'] == _category);
+
+    await FirebaseFirestore.instance
+        .collection('tasks')
+        .add({
+      'userId': widget.elderUid,
+      'title': _titleCtrl.text.trim(),
+      'category': _category.toLowerCase(),
+      'emoji': cat['emoji'],
+      'dueTime': Timestamp.fromDate(reminderTime),
+      'status': 'pending',
+      'isCompleted': false,
+      'completedAt': null,
+      'notes': '',
+      'addedBy': 'caretaker',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    setState(() => _saving = false);
+    if (mounted) Navigator.pop(context);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          '✅ Task added for ${widget.elderName}!',
+          style: GoogleFonts.plusJakartaSans(
+              color: Colors.white),
+        ),
+        backgroundColor: AppColors.sage,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        left: 20, right: 20, top: 8,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFFFBF7F2),
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+
+          RichText(
+            text: TextSpan(children: [
+              TextSpan(
+                text: 'Add task for ',
+                style: GoogleFonts.lora(
+                  fontSize: 20, fontWeight: FontWeight.w600,
+                  color: AppColors.walnut,
+                ),
+              ),
+              TextSpan(
+                text: widget.elderName.split(' ').first,
+                style: GoogleFonts.lora(
+                  fontSize: 20, fontWeight: FontWeight.w600,
+                  color: AppColors.sage,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ]),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Title
+          AashrayaTextField(
+            label: 'Task Name',
+            hint: 'e.g. Take morning medicine',
+            controller: _titleCtrl,
+            textInputAction: TextInputAction.done,
+          ),
+
+          const SizedBox(height: 14),
+
+          // Category
+          Text('Category',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 12, fontWeight: FontWeight.w600,
+                color: AppColors.walnut,
+              )),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _categories.length,
+              separatorBuilder: (_, __) =>
+                  const SizedBox(width: 8),
+              itemBuilder: (_, i) {
+                final cat = _categories[i];
+                final sel = _category == cat['label'];
+                return GestureDetector(
+                  onTap: () =>
+                      setState(() => _category = cat['label']!),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: sel
+                          ? AppColors.walnut
+                          : AppColors.background,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: sel
+                            ? AppColors.walnut
+                            : AppColors.border,
+                      ),
+                    ),
+                    child: Text(
+                      '${cat['emoji']} ${cat['label']}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: sel
+                            ? Colors.white
+                            : AppColors.walnut,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Time picker
+          GestureDetector(
+            onTap: () async {
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: _time,
+              );
+              if (picked != null) setState(() => _time = picked);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(children: [
+                const Icon(Icons.access_time_rounded,
+                    color: AppColors.textHint, size: 20),
+                const SizedBox(width: 10),
+                Text('Reminder time: ${_time.format(context)}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, color: AppColors.walnut,
+                    )),
+              ]),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Save
+          GestureDetector(
+            onTap: _saving ? null : _save,
+            child: Container(
+              width: double.infinity, height: 50,
+              decoration: BoxDecoration(
+                gradient: AppColors.sageGradient,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Center(
+                child: _saving
+                    ? const SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2))
+                    : Text('Add Task for Elder',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        )),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
